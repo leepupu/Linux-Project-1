@@ -31,13 +31,17 @@ void load_maps(unsigned int pid, struct vma_t **head) {
     while(fgets(line, 256, fp)) {
         int n = sscanf(line, "%lX-%lX %4s %lx %5s %ld %s", &s, &e, perm, &foo, dev, &inode, mappath);
         if(n!=7) {
-            printf("Invalid line\n");
-            continue;
+            // printf("Invalid line %u %s %d\n", n, mappath, mappath[0]);
+            if(n == 6)
+                mappath[0] = 0;
+            else
+                continue;
         }
         cur_vma = (struct vma_t*)malloc(sizeof(struct vma_t));
-        // printf("%p-%p\n", s, e);
+        printf("%p-%p: %s\n", s, e, mappath);
         cur_vma->s = s;
         cur_vma->e = e;
+        strcpy(cur_vma->filename, mappath);
         cur_vma->size = 0;
         cur_vma->nxt = 0;
 
@@ -69,7 +73,7 @@ void print_data(struct vma_t *head) {
         float varange = (cur_vma->e-cur_vma->s);
         float pasize = (cur_vma->size*4096.0);
         float percentage = (pasize/varange);
-        printf("%p-%p: %ukb, %.03f\%\n", cur_vma->s, cur_vma->e, cur_vma->size*4, 100.0*percentage);
+        printf("%p-%p: %ukb, %.3f %%   mappath: %s\n", cur_vma->s, cur_vma->e, cur_vma->size*4, 100.0*percentage, cur_vma->filename);
         if(percentage > 1.0) {
             exit(-1);
         }
