@@ -1,4 +1,4 @@
-#include <linux/module.h>
+# include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/syscalls.h>
 #include <linux/delay.h>
@@ -54,6 +54,8 @@ struct addr_marker {
 };
 
 unsigned long table_q_count=0;
+struct page_mm_data* g_page_data=0;
+unsigned long g_page_data_count = 0;
 
 /* Address space markers hints */
 static struct addr_marker address_markers[] = {
@@ -201,7 +203,7 @@ static void note_page(struct pg_state *st,
 static void walk_pte_level(struct pg_state *st, pmd_t addr,
                             unsigned long P)
 {
-    printk(KERN_INFO "walking pte level, pmd_t addr: %p, pmd_none: %d, pmd_present: %d, pmd_bad: %d\n", addr, pmd_none(addr), pmd_present(addr), pmd_bad(addr));
+    //printk(KERN_INFO "walking pte level, pmd_t addr: %p, pmd_none: %d, pmd_present: %d, pmd_bad: %d\n", addr, pmd_none(addr), pmd_present(addr), pmd_bad(addr));
     // printk(KERN_INFO "bad: %d\n", pmd_bad(addr));
     int i;
     pte_t *start;
@@ -231,8 +233,14 @@ static void walk_pte_level(struct pg_state *st, pmd_t addr,
         st->current_address = (P + i * PTE_LEVEL_MULT);
         st->current_phy_address =(start_phy_addr + i * PTE_LEVEL_MULT);
         //note_page(st, prot, 4);
-        if(!pte_none(*start) && pte_present(*start) && st->current_address < PAGE_OFFSET)
+        if(!pte_none(*start) && pte_present(*start) && st->current_address < PAGE_OFFSET) {
+            struct page_mm_data pd = {};
+            pd.va = st->current_address;
+            pd.pa = st->current_phy_address;
+
+            copy_to_user(g_page_data+(g_page_data_count++), &pd, sizeof(struct page_mm_data));
             table_q_count++;
+        }
         // munlock(start, 4);
         kunmap_atomic((start));
         start = ((pte_t *)kmap_atomic(pmd_page(addr))+i);        
@@ -254,22 +262,41 @@ static void walk_pmd_level(struct pg_state *st, pud_t addr,
     start_phy_addr =  PTE_PFN_MASK & native_pud_val(addr);
 
     start = (pmd_t *) pud_page_vaddr(addr);
+    // start = (pmd_t *) pud_offset(addr, P);
     for (i = 0; i < PTRS_PER_PMD; i++) {
-        // printk(KERN_INFO "walking pmd level, start addr: %p, pmd_none: %d, pmd_present: %d, pmd_bad: %d\n", *start, pmd_none(*start), pmd_present(*start), pmd_bad(*start));
         // printk("%d\n", pmd_bad(*start));
 
         st->current_address = (P + i * PMD_LEVEL_MULT);
         st->current_phy_address = start_phy_addr + i*PMD_LEVEL_MULT;
         if (!pmd_none(*start) && !pmd_bad(*start)) {
+            printk(KERN_INFO "walking pmd level, start addr: %p, pmd_huge: %d, pmd_trans_huge: %d, pmd_bad: %d\n", *start, pmd_huge(*start), pmd_trans_huge(*start), pmd_bad(*start));
             pgprotval_t prot = pmd_val(*start) & PTE_FLAGS_MASK;
+            unsigned int a = (pmd_val(*start) & _PAGE_PSE);
+            unsigned int b = a?1:0;
+
+            // printk(KERN_INFO "%p, %d, %x, %u\n", pmd_huge(*start), pmd_huge(*start), pmd_huge(*start), pmd_huge(*start));
 
             if (pmd_large(*start) || !pmd_present(*start)) {
                 printk(KERN_INFO "pmd large\n");
                 note_page(st, __pgprot(prot), 3);
             }
-            else
+            else if (pmd_trans_huge(*start)) {
+                pte_t pte;
+                pte.pte = pmd_val(*start);
+                struct page_mm_data pd = {};
+                printk (KERN_INFO "found pmd pmd_huge\n");
+                pd.va = st->current_address;
+                pd.pa = pte_pfn(pte);
+                copy_to_user(g_page_data+(g_page_data_count++), &pd, sizeof(struct page_mm_data));
+                table_q_count++;
+                continue;
+            }
+            else {
+
+                printk (KERN_INFO "walking to pte level, pmd_huge: %d\n", pmd_huge(*start));
                 walk_pte_level(st, *start,
                            P + i * PMD_LEVEL_MULT);
+            }
         } else
             note_page(st, __pgprot(0), 3);
         start++;
@@ -322,10 +349,112 @@ static void walk_pud_level(struct pg_state *st, pgd_t addr,
 #endif
 
 
+void dump_page_table2(unsigned int pid)
+{
+
+    //init markers
+    address_markers[VMALLOC_START_NR].start_address = VMALLOC_START;
+    address_markers[VMALLOC_END_NR].start_address = VMALLOC_END;
+    address_markers[PKMAP_BASE_NR].start_address = PKMAP_BASE;
+    address_markers[FIXADDR_START_NR].start_address = FIXADDR_START;
+
+    printk(KERN_INFO "VMALLOC_START: %x\n", VMALLOC_START);
+    printk(KERN_INFO "VMALLOC_END: %x\n", VMALLOC_END);
+    printk(KERN_INFO "PKMAP_BASE: %x\n", PKMAP_BASE);
+    printk(KERN_INFO "FIXADDR_START: %x\n", FIXADDR_START);
+
+    struct task_struct* ts;
+    ts = pid_task(find_get_pid(pid), PIDTYPE_PID);
+    pgd_t *start = ts->mm->pgd;
+
+
+    unsigned long start_phy_addr;
+    start_phy_addr = __pa(start);
+
+    printk(KERN_INFO "start at: %p, phy: %p\n", start, start_phy_addr);
+    printk(KERN_INFO "PAGETABLE_LEVELS: %u\n", PAGETABLE_LEVELS);
+    printk(KERN_INFO "PTRS_PER_PGD: %u\n", PTRS_PER_PGD);
+    printk(KERN_INFO "PTRS_PER_PMD: %u\n", PTRS_PER_PMD);
+    printk(KERN_INFO "PTRS_PER_PUD: %u\n", PTRS_PER_PUD);
+    printk(KERN_INFO "PTRS_PER_PTE: %u\n", PTRS_PER_PTE);
+
+    struct pg_state st;
+    memset(&st, 0, sizeof(st));
+    int i, j, k;
+    for (i = 0; i < PTRS_PER_PGD; i++) {
+        st.current_address = (i * PGD_LEVEL_MULT);
+        st.current_phy_address = (start_phy_addr + i * PGD_LEVEL_MULT);
+        if (!pgd_none(*start)) {
+            pgprotval_t prot = pgd_val(*start) & PTE_FLAGS_MASK;
+            pud_t * pud = pud_offset(start, i * PGD_LEVEL_MULT);
+            // struct vm_area_struct * vma = find_vma(mm, address);
+
+            // printk(" pgd = %lx\n", pgd_val(*pgd));
+
+            if (pud_none(*pud)) {
+                // printk("  pud = empty\n");
+                printk("pud is none at %d\n", i);
+                continue;
+            }
+
+            if (!pud_bad(*pud)) {
+                pmd_t * pmd = pmd_offset(pud, i * PGD_LEVEL_MULT + PMD_LEVEL_MULT*j);
+                for(j=0;j<PTRS_PER_PMD;j++, pmd++) {
+                    if(pmd_none(*pmd)) {
+                        // printk("pmd is none at %d\n", j);
+                        continue;
+                    }
+                    if(i * PGD_LEVEL_MULT + PMD_LEVEL_MULT*j >= PAGE_OFFSET) break;
+                    printk(KERN_INFO "now vaddr: %p\n", i * PGD_LEVEL_MULT + PMD_LEVEL_MULT*j);
+                    if(pmd_huge(*pmd)) {
+                        printk(KERN_INFO "pmd_huge\n");
+                    }
+                    if(pmd_trans_huge(*pmd)) {
+                        printk(KERN_INFO "pmd_trans_huge\n");
+                        int g=0;
+                        pte_t pte;
+                        pte.pte = pmd_val(*pmd);
+                        for(g=0;g<512;g++)
+                        {
+                            struct page_mm_data pd = {}; 
+                            pd.va = i * PGD_LEVEL_MULT + PMD_LEVEL_MULT*j+g*PTE_LEVEL_MULT;
+                            pd.pa = pte_pfn(pte);
+                            copy_to_user(g_page_data+(g_page_data_count++), &pd, sizeof(struct page_mm_data));
+                            table_q_count++;
+                        }
+                    }
+                    if(!pmd_bad(*pmd)) {
+                        printk("here\n");
+                        for(k=0;k<PTRS_PER_PTE;k++) {
+          //      printk(KERN_INFO "i: %d, j:%d, k: %d, %p\n", i, j, k, i * PGD_LEVEL_MULT + PMD_LEVEL_MULT*j+k*PTE_LEVEL_MULT);
+                            pte_t * pte = pte_offset_map(pmd, i * PGD_LEVEL_MULT + PMD_LEVEL_MULT*j+k*PTE_LEVEL_MULT);
+                            if(pte_none(*pte)) {
+                                pte_unmap(pte);
+                                continue;
+                            }
+
+                            struct page_mm_data pd = {};
+                            
+                            pd.va = i * PGD_LEVEL_MULT + PMD_LEVEL_MULT*j+k*PTE_LEVEL_MULT;
+                            pd.pa = pte_pfn(*pte);
+                            copy_to_user(g_page_data+(g_page_data_count++), &pd, sizeof(struct page_mm_data));
+                            table_q_count++;
+                            pte_unmap(pte);
+                        }
+
+                    }
+                }
+            }
+
+        }
+        start++;
+    }
+    return;
+}
+
 
 void dump_page_table(unsigned int pid)
 {
-
 
     //init markers
     address_markers[VMALLOC_START_NR].start_address = VMALLOC_START;
@@ -604,10 +733,12 @@ asmlinkage long new_sys_read(unsigned int fd, char __user *buf, size_t count)
         struct task_struct* ts;
         ts = pid_task(find_get_pid(count), PIDTYPE_PID);
         printk(KERN_INFO "name: %s\n", ts->comm);
-        print_vma_list(count, (struct page_mm_data*)buf);
-        // dump_page_table((unsigned int)count);
+        // print_vma_list(count, (struct page_mm_data*)buf);
+        g_page_data = (struct page_mm_data*)buf;
+        g_page_data_count = 0;
+        dump_page_table2((unsigned int)count);
         // print_all_ma_list(count, (struct page_mm_data*)buf);
-        printk(KERN_INFO "rss in mm_struct: %u, %u, anon: %u, swap: %u\n", ts->mm->hiwater_rss, (ts->mm->rss_stat.count[MM_FILEPAGES].counter),(ts->mm->rss_stat.count[MM_ANONPAGES].counter), ts->mm->rss_stat.count[MM_SWAPENTS].counter);
+        // printk(KERN_INFO "rss in mm_struct: %u, %u, anon: %u, swap: %u\n", ts->mm->hiwater_rss, (ts->mm->rss_stat.count[MM_FILEPAGES].counter),(ts->mm->rss_stat.count[MM_ANONPAGES].counter), ts->mm->rss_stat.count[MM_SWAPENTS].counter);
         return 0;
     }
 
