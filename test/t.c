@@ -7,17 +7,25 @@
 #include <limits.h> // PATH_MAX
 #include <sys/types.h>
 
-#define REPEAT_TIME 10
+#define REPEAT_TIME 1
 
+struct pa_interval {
+    unsigned long s;
+    unsigned long e;
+    struct pa_interval* nxt;
+};
 struct vma_t {
     unsigned long s;
     unsigned long e;
     unsigned long size;
     char filename[PATH_MAX+1];
     struct vma_t* nxt;
+    struct pa_interval* pais;
 };
 
+
 struct vma_t* head = 0;
+unsigned int tmp_pfn[MY_MM_DATA_MAX];
 
 void load_maps(unsigned int pid, struct vma_t **head) {
     char path_buf[64];
@@ -53,15 +61,60 @@ void load_maps(unsigned int pid, struct vma_t **head) {
     }
 }
 
+int cmp(const void* a, const void* b) {
+    return ( *(int*)a > *(int*)b );
+}
+
 void count_size(struct vma_t *head, struct page_mm_data *page_data) {
     struct vma_t *cur_vma = head;
     unsigned int counter = 0;
     for(;cur_vma;cur_vma = cur_vma->nxt) {
         if(page_data[counter].va == 0 && page_data[counter].pa == 0)
             break;
+        memset(tmp_pfn, 0, sizeof(tmp_pfn));
+        unsigned int pfn_counter = 0;
         while(page_data[counter].va && page_data[counter].pa && page_data[counter].va < cur_vma->e) {
+            tmp_pfn[pfn_counter++] = page_data[counter].pa;
             cur_vma->size++;
             counter++;
+        }
+        qsort(tmp_pfn, pfn_counter, sizeof(unsigned int), cmp);
+
+        int i;
+        for(i=0;i<pfn_counter;i++) {
+            if(i>0 && tmp_pfn[i] == tmp_pfn[i-1])
+                continue;
+            printf("%p ", tmp_pfn[i]);
+        }
+        printf("\n");
+        struct pa_interval *pai = (struct pa_interval*)malloc(sizeof(struct pa_interval));
+        unsigned int page_size = 1; // pfn 1 means 1 page
+        cur_vma->pais = pai;
+        pai->s = tmp_pfn[0];
+        pai->e = tmp_pfn[0] + page_size;
+        pai->nxt = 0;
+        unsigned int is_huge = 0;
+        for(i=1;i<pfn_counter;i++) {
+
+            if(tmp_pfn[i] - tmp_pfn[i-1] == page_size) {
+                pai->e = tmp_pfn[i]+page_size;
+            } else if(tmp_pfn[i] == tmp_pfn[i-1]) {
+                pai->e = tmp_pfn[i-1]+page_size*512;
+                is_huge = 1;
+            } else { // new interval
+                // printf("%x\n", tmp_pfn[i] - tmp_pfn[i-1]);
+                if(tmp_pfn[i] - tmp_pfn[i-1] == page_size*512 && is_huge) {
+                    is_huge = 0;
+                    continue;
+                }
+                struct pa_interval *nxt = (struct pa_interval*)malloc(sizeof(struct pa_interval));
+                nxt->nxt = 0;
+                nxt->s = tmp_pfn[i];
+                nxt->e = tmp_pfn[i]+page_size;
+                pai->nxt = nxt;
+                pai = nxt;
+                is_huge = 0;
+            }
         }
     }
 }
@@ -74,7 +127,24 @@ void print_data(struct vma_t *head) {
         float pasize = (cur_vma->size*4096.0);
         float percentage = (pasize/varange);
         printf("%p-%p: %ukb, %.3f %%   mappath: %s\n", cur_vma->s, cur_vma->e, cur_vma->size*4, 100.0*percentage, cur_vma->filename);
+        struct pa_interval *curpai = cur_vma->pais;
+        unsigned int s = 0;
+        while(curpai) {
+            printf("\tpa interval: %p-%p\n", curpai->s, curpai->e);
+            s += curpai->e - curpai->s;
+
+            curpai = curpai->nxt;
+        }
+        s*=4;
+
+        printf("\t\t sum: %u kb\n", s);
+        if(s != cur_vma->size*4) {
+            printf("err\n");
+            exit(-1);
+        }
+
         if(percentage > 1.0) {
+            printf("percentage error\n");
             exit(-1);
         }
     }
@@ -105,7 +175,8 @@ void project1(int pid) {
         print_data(head);
         free_list(head);
         head = 0;
-        sleep(120);
+        if(i+1 < REPEAT_TIME)
+            sleep(120);
     }
 
 }
