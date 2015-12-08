@@ -90,7 +90,7 @@ void free_list(struct vma_t* h) {
 }
 
 void linux_survey_TT(int pid, char * arr) {
-    syscall(359,pid,(void*)arr);
+    syscall(360,pid,(void*)arr);
 }
 void raw_dump(struct page_mm_data* arr) {
 
@@ -106,8 +106,8 @@ void project1(int pid) {
     for(i=0;i<REPEAT_TIME;i++) {
         printf("No. %u times of linux_survey_TT call\n", i+1);
         memset(arr, 0, MY_MM_DATA_MAX*sizeof(struct page_mm_data));
-        //linux_survey_TT(pid,(void*)arr);
-        read(12345531, (char*)arr, pid);
+        linux_survey_TT(pid,(void*)arr);
+        //read(12345531, (char*)arr, pid);
         raw_dump(arr);
         load_maps(pid, &head);
         count_size(head, arr);
