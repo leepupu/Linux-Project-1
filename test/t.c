@@ -13,6 +13,7 @@ struct pa_interval {
     unsigned long s;
     unsigned long e;
     struct pa_interval* nxt;
+    unsigned long huge_size;
 };
 struct vma_t {
     unsigned long s;
@@ -104,7 +105,7 @@ void count_size(struct vma_t *head, struct page_mm_data *page_data) {
 
         printf("vma size is: %u, pfn_counter: %u\n", cur_vma->size, pfn_counter);*/
 
-        
+
         if(cur_vma->size != pfn_counter) {
             printf("[error] size mismatch\n");
             exit(-1);
@@ -116,6 +117,7 @@ void count_size(struct vma_t *head, struct page_mm_data *page_data) {
             pai->s = tmp_pfn[0];
             pai->e = tmp_pfn[0] + page_size;
             pai->nxt = 0;
+            pai->huge_size = 1;
             unsigned int is_huge = 0;
             unsigned int huge_size = 0;
 
@@ -125,21 +127,29 @@ void count_size(struct vma_t *head, struct page_mm_data *page_data) {
                     pai->e = tmp_pfn[i]+page_size;
                 } else if(tmp_pfn[i] == tmp_pfn[i-1]) {
                     huge_size++;
+                    pai->huge_size ++;
+
                     pai->e = tmp_pfn[i]+page_size*(huge_size+1);
                     is_huge = 1;
                 } else { // new interval
                     // printf("%x\n", tmp_pfn[i] - tmp_pfn[i-1]);
                     if(tmp_pfn[i] - tmp_pfn[i-1] == page_size*(huge_size+1) && is_huge) {
                         pai->e = tmp_pfn[i]+page_size;
+                        pai->huge_size ++;
                         is_huge = 0;
                         huge_size = 0;
                         continue;
+                    }
+                    if(huge_size+1 != 1 && huge_size+1 != 512) {
+                        printf("strange huge_size: %p\n", huge_size+1);
+                        // exit(0);
                     }
                     struct pa_interval *nxt = (struct pa_interval*)malloc(sizeof(struct pa_interval));
                     nxt->nxt = 0;
                     huge_size = 0;
                     nxt->s = tmp_pfn[i];
                     nxt->e = tmp_pfn[i]+page_size;
+                    nxt->huge_size = 1;
                     pai->nxt = nxt;
                     pai = nxt;
                     is_huge = 0;
@@ -160,7 +170,7 @@ void print_data(struct vma_t *head) {
         struct pa_interval *curpai = cur_vma->pais;
         unsigned int s = 0;
         while(curpai) {
-            printf("\tpa interval: %p-%p (%p)\n", curpai->s, curpai->e, curpai->e - curpai->s);
+            printf("\tpa interval: %p-%p (%p, huge_size: %u)\n", curpai->s, curpai->e, curpai->e - curpai->s, curpai->huge_size);
             s += curpai->e - curpai->s;
 
             curpai = curpai->nxt;
