@@ -52,6 +52,7 @@ void load_maps(unsigned int pid, struct vma_t **head) {
         strcpy(cur_vma->filename, mappath);
         cur_vma->size = 0;
         cur_vma->nxt = 0;
+        cur_vma->pais = 0;
 
         if(*head == 0)
             *head = cur_vma;
@@ -73,7 +74,7 @@ void count_size(struct vma_t *head, struct page_mm_data *page_data) {
             break;
         memset(tmp_pfn, 0, sizeof(tmp_pfn));
         unsigned int pfn_counter = 0;
-        while(page_data[counter].va && page_data[counter].pa && page_data[counter].va < cur_vma->e) {
+        while(page_data[counter].va && page_data[counter].pa && page_data[counter].va < cur_vma->e && page_data[counter].va >= cur_vma->s ) {
             tmp_pfn[pfn_counter++] = page_data[counter].pa;
             cur_vma->size++;
             counter++;
@@ -81,39 +82,68 @@ void count_size(struct vma_t *head, struct page_mm_data *page_data) {
         qsort(tmp_pfn, pfn_counter, sizeof(unsigned int), cmp);
 
         int i;
-        for(i=0;i<pfn_counter;i++) {
-            if(i>0 && tmp_pfn[i] == tmp_pfn[i-1])
+
+        int mm = 0;
+        int huge_size = 0;
+        // printf("fucking here: %p, %p\n", tmp_pfn[1] , tmp_pfn[2]);
+        /*for(i=0;i<pfn_counter;i++) {
+            if(i>0 && tmp_pfn[i] == tmp_pfn[i-1]) {
+                huge_size++;
+                if(mm==0)
+                    printf(" huge and pass...\n");
+                mm = 1;
                 continue;
+            }
+            if(mm == 1)
+                printf("huge_size: %u\n", huge_size+1);
             printf("%p ", tmp_pfn[i]);
+            huge_size = 0;
+            mm=0;
         }
         printf("\n");
-        struct pa_interval *pai = (struct pa_interval*)malloc(sizeof(struct pa_interval));
-        unsigned int page_size = 1; // pfn 1 means 1 page
-        cur_vma->pais = pai;
-        pai->s = tmp_pfn[0];
-        pai->e = tmp_pfn[0] + page_size;
-        pai->nxt = 0;
-        unsigned int is_huge = 0;
-        for(i=1;i<pfn_counter;i++) {
 
-            if(tmp_pfn[i] - tmp_pfn[i-1] == page_size) {
-                pai->e = tmp_pfn[i]+page_size;
-            } else if(tmp_pfn[i] == tmp_pfn[i-1]) {
-                pai->e = tmp_pfn[i-1]+page_size*512;
-                is_huge = 1;
-            } else { // new interval
-                // printf("%x\n", tmp_pfn[i] - tmp_pfn[i-1]);
-                if(tmp_pfn[i] - tmp_pfn[i-1] == page_size*512 && is_huge) {
+        printf("vma size is: %u, pfn_counter: %u\n", cur_vma->size, pfn_counter);*/
+
+        
+        if(cur_vma->size != pfn_counter) {
+            printf("[error] size mismatch\n");
+            exit(-1);
+        }
+        if(pfn_counter > 0) {
+            struct pa_interval *pai = (struct pa_interval*)malloc(sizeof(struct pa_interval));
+            unsigned int page_size = 1; // pfn 1 means 1 page
+            cur_vma->pais = pai;
+            pai->s = tmp_pfn[0];
+            pai->e = tmp_pfn[0] + page_size;
+            pai->nxt = 0;
+            unsigned int is_huge = 0;
+            unsigned int huge_size = 0;
+
+            for(i=1;i<pfn_counter;i++) {
+
+                if(tmp_pfn[i] - tmp_pfn[i-1] == page_size) {
+                    pai->e = tmp_pfn[i]+page_size;
+                } else if(tmp_pfn[i] == tmp_pfn[i-1]) {
+                    huge_size++;
+                    pai->e = tmp_pfn[i]+page_size*(huge_size+1);
+                    is_huge = 1;
+                } else { // new interval
+                    // printf("%x\n", tmp_pfn[i] - tmp_pfn[i-1]);
+                    if(tmp_pfn[i] - tmp_pfn[i-1] == page_size*(huge_size+1) && is_huge) {
+                        pai->e = tmp_pfn[i]+page_size;
+                        is_huge = 0;
+                        huge_size = 0;
+                        continue;
+                    }
+                    struct pa_interval *nxt = (struct pa_interval*)malloc(sizeof(struct pa_interval));
+                    nxt->nxt = 0;
+                    huge_size = 0;
+                    nxt->s = tmp_pfn[i];
+                    nxt->e = tmp_pfn[i]+page_size;
+                    pai->nxt = nxt;
+                    pai = nxt;
                     is_huge = 0;
-                    continue;
                 }
-                struct pa_interval *nxt = (struct pa_interval*)malloc(sizeof(struct pa_interval));
-                nxt->nxt = 0;
-                nxt->s = tmp_pfn[i];
-                nxt->e = tmp_pfn[i]+page_size;
-                pai->nxt = nxt;
-                pai = nxt;
-                is_huge = 0;
             }
         }
     }
@@ -130,7 +160,7 @@ void print_data(struct vma_t *head) {
         struct pa_interval *curpai = cur_vma->pais;
         unsigned int s = 0;
         while(curpai) {
-            printf("\tpa interval: %p-%p\n", curpai->s, curpai->e);
+            printf("\tpa interval: %p-%p (%p)\n", curpai->s, curpai->e, curpai->e - curpai->s);
             s += curpai->e - curpai->s;
 
             curpai = curpai->nxt;
