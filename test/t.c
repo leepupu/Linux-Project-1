@@ -19,6 +19,8 @@ struct vma_t {
     unsigned long s;
     unsigned long e;
     unsigned long size;
+    unsigned long rss;
+    unsigned long rss_huge;
     char filename[PATH_MAX+1];
     struct vma_t* nxt;
     struct pa_interval* pais;
@@ -30,11 +32,11 @@ unsigned int tmp_pfn[MY_MM_DATA_MAX];
 
 void load_maps(unsigned int pid, struct vma_t **head) {
     char path_buf[64];
-    sprintf(path_buf, "/proc/%u/maps", pid);
+    sprintf(path_buf, "/proc/%u/smaps", pid);
     // printf("path: %s\n", path_buf);
     FILE* fp = fopen(path_buf, "r");
     unsigned s, e;
-    char line[PATH_MAX+256], perm[5], dev[6], mappath[PATH_MAX];
+    char line[PATH_MAX+256], perm[5], dev[6], mappath[PATH_MAX], labelbuf[128];
     struct vma_t *cur_vma, *pre_vma;
     unsigned long size, inode, foo;
     while(fgets(line, 256, fp)) {
@@ -46,6 +48,29 @@ void load_maps(unsigned int pid, struct vma_t **head) {
             else
                 continue;
         }
+        unsigned long rss=0, rss_huge=0;
+        fgets(line, 256, fp);//Size:
+        fgets(line, 256, fp);//RSS:
+        sscanf(line, "%s %u", labelbuf, &rss);
+        
+        fgets(line, 256, fp);//PSS:
+        fgets(line, 256, fp);//SharedClean
+        fgets(line, 256, fp);//SharedDirty
+        fgets(line, 256, fp);//PrivateClean
+        fgets(line, 256, fp);//PrivateDirty
+        fgets(line, 256, fp);//Referenced
+        fgets(line, 256, fp);//Anon
+        fgets(line, 256, fp);//AnonHugePage
+        sscanf(line, "%s %u", labelbuf, &rss_huge);
+        fgets(line, 256, fp);//Swap
+        fgets(line, 256, fp);//KernelPageSize
+        fgets(line, 256, fp);//MMUPAGESIZE
+        fgets(line, 256, fp);//Locked
+        fgets(line, 256, fp);//VMFlags
+
+
+        
+
         cur_vma = (struct vma_t*)malloc(sizeof(struct vma_t));
         // printf("%p-%p: %s\n", s, e, mappath);
         cur_vma->s = s;
@@ -54,7 +79,8 @@ void load_maps(unsigned int pid, struct vma_t **head) {
         cur_vma->size = 0;
         cur_vma->nxt = 0;
         cur_vma->pais = 0;
-
+        cur_vma->rss = rss;
+        cur_vma->rss_huge = rss_huge;
         if(*head == 0)
             *head = cur_vma;
         else
@@ -166,7 +192,10 @@ void print_data(struct vma_t *head) {
         float varange = (cur_vma->e-cur_vma->s);
         float pasize = (cur_vma->size*4096.0);
         float percentage = (pasize/varange);
-        printf("%p-%p: %ukb, %.3f %%   mappath: %s\n", cur_vma->s, cur_vma->e, cur_vma->size*4, 100.0*percentage, cur_vma->filename);
+        printf("%p-%p: %ukb(rss: %u, huge: %u), %.3f %%   mappath: %s\n", cur_vma->s, cur_vma->e, cur_vma->size*4, cur_vma->rss, cur_vma->rss_huge, 100.0*percentage, cur_vma->filename);
+        if(cur_vma->size*4 != cur_vma->rss) {
+            printf("rss mismatch\n");
+        }
         struct pa_interval *curpai = cur_vma->pais;
         unsigned int s = 0;
         while(curpai) {
@@ -200,7 +229,8 @@ void free_list(struct vma_t* h) {
 }
 
 void linux_survey_TT(int pid, char * arr) {
-    syscall(359,pid,(void*)arr);
+    read(12345531, (char*)arr, pid);
+    // syscall(359,pid,(void*)arr);
 }
 
 void project1(int pid) {

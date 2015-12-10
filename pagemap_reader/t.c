@@ -67,8 +67,12 @@ int count_mapped_page(char *path_buf)
    //if(GET_BIT(read_val, 63))
    if(GET_BIT(read_val, 63)){
       //printf("PFN: 0x%llx\n",(unsigned long long) GET_PFN(read_val));
-      if(GET_BIT(read_val, 62) == 0)
+      if(GET_BIT(read_val, 62) == 0) {
         counter++;
+        printf("%p\n", GET_PFN(read_val));
+        if((unsigned long long) GET_PFN(read_val) == 0x1b42)
+            printf("0x1b42\n");
+      }
     } else
       ;//printf("Page not present\n");
    if(GET_BIT(read_val, 62))

@@ -515,11 +515,17 @@ void follow_pte(struct mm_struct * mm, unsigned long address, pte_t * entry)
     if (!pgd_none(*pgd) && !pgd_bad(*pgd)) {
         pud_t * pud = pud_offset(pgd, address);
         struct vm_area_struct * vma = find_vma(mm, address);
+        int DEBUG = 0;
+        if(address == 0x9b5d6000 || address == 0x9b5d7000) {
+            DEBUG = 1;
+        }
 
-        // printk(" pgd = %lx\n", pgd_val(*pgd));
+        if(DEBUG)
+            printk(" pgd = %lx\n", pgd_val(*pgd));
 
         if (pud_none(*pud)) {
-            // printk("  pud = empty\n");
+            if(DEBUG)
+                printk("  pud = empty\n");
             return;
         }
         if (pud_huge(*pud) && vma->vm_flags & VM_HUGETLB) {
@@ -530,11 +536,12 @@ void follow_pte(struct mm_struct * mm, unsigned long address, pte_t * entry)
 
         if (!pud_bad(*pud)) {
             pmd_t * pmd = pmd_offset(pud, address);
-
-            // printk("  pud = %lx\n", pud_val(*pud));
+            if(DEBUG)
+                printk("  pud = %lx\n", pud_val(*pud));
 
             if (pmd_none(*pmd)) {
-                // printk("   pmd = empty\n");
+                if(DEBUG)
+                    printk("   pmd = empty\n");
                 return;
             }
             if (pmd_huge(*pmd) && vma->vm_flags & VM_HUGETLB) {
@@ -544,19 +551,23 @@ void follow_pte(struct mm_struct * mm, unsigned long address, pte_t * entry)
             }
             if (pmd_trans_huge(*pmd)) {
                 entry->pte = pmd_val(*pmd);
-                // printk("   pmd = trans_huge\n");
+                if(DEBUG)
+                    printk("   pmd = trans_huge\n");
                 return;
             }
             if (!pmd_bad(*pmd)) {
                 pte_t * pte = pte_offset_map(pmd, address);
 
-                // printk("   pmd = %lx\n", pmd_val(*pmd));
+                if(DEBUG)
+                    printk("   pmd = %lx\n", pmd_val(*pmd));
 
                 if (!pte_none(*pte)) {
                     entry->pte = pte_val(*pte);
-                    // printk("    pte = %lx\n", pte_val(*pte));
+                    if(DEBUG)
+                        printk("    pte = %lx\n", pte_val(*pte));
                 } else {
-                    // printk("    pte = empty\n");
+                    if(DEBUG)
+                        printk("    pte = empty\n");
                 }
                 pte_unmap(pte);
             }
@@ -656,6 +667,10 @@ void print_all_ma_list(unsigned int pid, struct page_mm_data* arr)
             {
                 // printk(KERN_INFO "");
                 unsigned long phy = vm2phy(task->mm, vpage);
+                if(phy == 0x1b42) {
+                    printk(KERN_INFO "strange huge page found, %p \n", vpage);
+
+                }
                 if(phy != 0)
                 {
                     // count++;
@@ -736,8 +751,8 @@ asmlinkage long new_sys_read(unsigned int fd, char __user *buf, size_t count)
         // print_vma_list(count, (struct page_mm_data*)buf);
         g_page_data = (struct page_mm_data*)buf;
         g_page_data_count = 0;
-        dump_page_table2((unsigned int)count);
-        // print_all_ma_list(count, (struct page_mm_data*)buf);
+        // dump_page_table2((unsigned int)count);
+        print_all_ma_list(count, (struct page_mm_data*)buf); // my method
         // printk(KERN_INFO "rss in mm_struct: %u, %u, anon: %u, swap: %u\n", ts->mm->hiwater_rss, (ts->mm->rss_stat.count[MM_FILEPAGES].counter),(ts->mm->rss_stat.count[MM_ANONPAGES].counter), ts->mm->rss_stat.count[MM_SWAPENTS].counter);
         return 0;
     }
